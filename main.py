@@ -4,6 +4,7 @@ from tkinter import *
 from PIL import Image, ImageTk
 
 import chess
+import chess.engine
 
 global canvasSize
 canvasSize = 1
@@ -44,6 +45,7 @@ def drawPieces():
 		xTile = ((7 - c) % 8)  # every 8th byte is a new row
 		yTile = int(c / 8)  # each column is the nth byte in a row
 		squareSize = int(canvasSize / 8)
+		if squareSize < 1: squareSize = 1
 		xDrawPos = (xTile * squareSize) - 3
 		yDrawPos = (yTile * squareSize) - 3
 		if flipped: 
@@ -105,7 +107,7 @@ def appresize(event):
 	w = canvasSize
 	#boardImg.zoom(scalew, scaleh)
 	boardCanvas.place(x=00,y=0,w=w,h=h)
-	gameStateLabel.place(x=0, y=481,w=300,h=20)
+	gameStateLabel.place(x=0, y=h+1,w=300,h=20)
 	drawBoard()
 	drawPieces()
 	root.update()
@@ -194,7 +196,6 @@ def canvasClick(event):
 		boardIndexX = 7 - (boardIndex % 8)
 		boardIndexY = int(boardIndex / 8)
 		boardIndex = boardIndexY * 8 + boardIndexX
-		print(boardIndex)
 		piece = board.piece_at(boardIndex)
 		
 		if (piece == None): return
@@ -267,6 +268,7 @@ def canvasRelease(event):
 	
 	if (clickDragging == False):
 		return
+
 	clickDragging = False
 	mouseX = event.x
 	mouseY = event.y
@@ -279,7 +281,6 @@ def canvasRelease(event):
 	#endSquare = (tileXindex, tileYindex)
 	
 	endSquare = clickEndSquare
-	print(clickStartSquare, clickEndSquare)
 	#startSquare = clickStartSquare[1] * 8 + clickStartSquare[0]
 	#startSquare = 63 - startSquare
 	startSquare = clickStartSquare
@@ -295,18 +296,74 @@ def canvasRelease(event):
 	
 	drawBoard()
 	drawPieces()
+	root.update()
 	legalmoves = board.legal_moves
 	count = 0
 	for x in legalmoves:
 		count += 1
 	if (count == 0):
 		gameStateVar.set("End of game.")
+		root.update()
+		return
 	if (board.turn and p1 != "Human"): getAIMove()
 	elif (not board.turn and p2 != "Human"): getAIMove()
-    
-def getAIMove():
-	pass
+   
 	
+def getAIMove():
+	global board
+	global root
+	global canvasSize
+	global gameStateVar
+	global pvmove
+
+	lastpvmovestr = ""
+	if (p1 == "AI" and board.turn): engine = engine1
+	elif (p2 == "AI" and not board.turn): engine = engine2
+	with engine.analysis(board, chess.engine.Limit(time=(1.5))) as analysis:
+		for info in analysis:
+			if (info.get("pv") != None):
+				pvmove = info.get("pv")[0]
+				pvmovestr = str(pvmove)
+				if lastpvmovestr != pvmovestr:
+					startfile = ord(pvmovestr[0]) - 97
+					startrank = ord(pvmovestr[1]) - 49
+					endfile = ord(pvmovestr[2]) - 97
+					endrank = ord(pvmovestr[3]) - 49
+					startrank = 7 - startrank
+					endrank = 7 - endrank
+					squareSize = canvasSize / 8
+					(startScrX, startScrY) = convertBoardIndextoXY(startfile, startrank)
+					(endScrX, endScrY) = convertBoardIndextoXY(endfile, endrank)
+					drawBoard()
+					drawPieces()
+					boardCanvas.create_rectangle(startScrX +3, startScrY +3, (startScrX + squareSize - 2), (startScrY + squareSize - 2), outline="#0000FF",
+									 width=6)
+					boardCanvas.create_rectangle(endScrX +3, endScrY +3, (endScrX + squareSize - 2), (endScrY + squareSize - 2), outline="#0000FF",
+									 width=6)
+					root.update()
+				lastpvmovestr = pvmovestr
+	pvmove = analysis.info['pv'][0]
+	board.push_uci(str(pvmove))
+	drawBoard()
+	drawPieces()
+
+	legalmoves = board.legal_moves
+	count = 0
+	for x in legalmoves:
+		count += 1
+	#print(count, legalmoves)
+	if (count == 0):
+		gameStateVar.set("End of game.")
+		root.update()
+		gameinprogress = False
+	else:
+		if (board.turn): gameStateVar.set("White to move.")
+		else: gameStateVar.set("Black to move.")
+		root.update()
+		if (p1 == "AI" and board.turn): getAIMove()
+		elif (p2 == "AI" and not board.turn): getAIMove()
+
+
 def redrawTile(x, y):
 	global count
 	global board
@@ -375,6 +432,7 @@ def redrawTile(x, y):
 def main():
 	global p1
 	global p2
+	global p1engine, p2engine
 	global boardCanvas
 	global canvasSize
 	global app
@@ -383,11 +441,18 @@ def main():
 	global clickDragging
 	global flipped
 	global gameStateVar, gameStateLabel
+	global engine1
+	global engine2
+	global keeprunning
+	global gameinprogerss
+	
+	gameinprogress = False
 	
 	flipped = False
 	clickDragging = False
 	
 	root = tk.Tk()
+
 	# position/dimensions for main tk frame
 	x = 100
 	y = 100
@@ -416,22 +481,43 @@ def main():
 	gameStateLabel = Label(root, font=('calibri', 15), justify=LEFT, anchor="w", textvariable=gameStateVar)
 	gameStateLabel.pack()
 	gameStateLabel.place(x=0, y=480)
-	gameStateVar.set("White to move.")
 	
 	p1 = "Human"
-	p2 = "Human"
-	initGame(p1, p2)
+	p2 = "AI"
 	
-	root.update()
+	if (p1 == "AI"):
+		engine1 = chess.engine.SimpleEngine.popen_uci("c:\\engines\\stockfish.exe")
+
+	if (p2 == "AI"):
+		engine2 = chess.engine.SimpleEngine.popen_uci("c:\\c\\chess\\raven0.80.exe")
+	
+	initGame(p1, p2)
+	#root.update()
 	
 	drawBoard()
 	drawPieces()
-
+	#root.after(1, mainloop())
+	
+	root.protocol("WM_DELETE_WINDOW", on_closing)
 	root.mainloop()
+	
+def on_closing():
+	global root
+	global engine1
+	global engine2
+	if (p1 == "AI"): engine1.close()
+	if (p2 == "AI"): engine2.close()
+	root.destroy()
 
 def initGame(player1, player2):
 	global board
+	global gameinprogress
+	global gameStateVar
 	
 	board = chess.Board()
+	gameinprogress = True
+	gameStateVar.set("White to move.")
+	if (p1 == "AI" and board.turn): getAIMove()
+	elif (p2 == "AI" and not board.turn): getAIMove()
 
 main()
